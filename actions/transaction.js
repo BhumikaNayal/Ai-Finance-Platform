@@ -1,96 +1,90 @@
 "use server";
 
 import { auth } from "@clerk/nextjs/server";
-import { db } from "@/lib/prisma";
+import { connectDB } from "@/lib/mongodb";
+import User from "@/models/User";
+import Account from "@/models/Account";
+import Transaction from "@/models/Transaction";
 import { revalidatePath } from "next/cache";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-const serializeAmount = (obj) => ({
-  ...obj,
-  amount: obj.amount.toNumber(),
-});
-
-// Create Transaction
+// Create Transaction - MongoDB version
 export async function createTransaction(data) {
   try {
     const { userId } = await auth();
     if (!userId) throw new Error("Unauthorized");
 
-    const user = await db.user.findUnique({
-      where: { clerkUserId: userId },
-    });
+    await connectDB();
 
-    if (!user) {
-      throw new Error("User not found");
-    }
+    const user = await User.findOne({ clerkUserId: userId });
+    if (!user) throw new Error("User not found");
 
-    const account = await db.account.findUnique({
-      where: {
-        id: data.accountId,
-        userId: user.id,
-      },
-    });
-
-    if (!account) {
-      throw new Error("Account not found");
-    }
+    const account = await Account.findById(data.accountId);
+    if (!account) throw new Error("Account not found");
 
     // Calculate new balance
     const balanceChange = data.type === "EXPENSE" ? -data.amount : data.amount;
-    const newBalance = account.balance.toNumber() + balanceChange;
 
-    // Create transaction and update account balance
-    const transaction = await db.$transaction(async (tx) => {
-      const newTransaction = await tx.transaction.create({
-        data: {
-          ...data,
-          userId: user.id,
-          nextRecurringDate:
-            data.isRecurring && data.recurringInterval
-              ? calculateNextRecurringDate(data.date, data.recurringInterval)
-              : null,
-        },
-      });
+    // Create transaction
+    const transaction = await Transaction.create({
+      ...data,
+      userId: user._id,
+      nextRecurringDate:
+        data.isRecurring && data.recurringInterval
+          ? calculateNextRecurringDate(data.date, data.recurringInterval)
+          : null,
+    });
 
-      await tx.account.update({
-        where: { id: data.accountId },
-        data: { balance: newBalance },
-      });
-
-      return newTransaction;
+    // Update account balance
+    await Account.findByIdAndUpdate(data.accountId, {
+      $inc: { balance: balanceChange },
     });
 
     revalidatePath("/dashboard");
-    revalidatePath(`/account/${transaction.accountId}`);
+    revalidatePath(`/account/${data.accountId}`);
 
-    return { success: true, data: serializeAmount(transaction) };
+    return {
+      success: true,
+      data: {
+        ...transaction.toObject(),
+        id: transaction._id.toString(),
+        accountId: transaction.accountId.toString(),
+      },
+    };
   } catch (error) {
-    throw new Error(error.message);
+    console.error("Transaction creation error:", error);
+    return { success: false, error: error.message };
   }
 }
 
 export async function getTransaction(id) {
-  const { userId } = await auth();
-  if (!userId) throw new Error("Unauthorized");
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("Unauthorized");
 
-  const user = await db.user.findUnique({
-    where: { clerkUserId: userId },
-  });
+    await connectDB();
 
-  if (!user) throw new Error("User not found");
+    const user = await User.findOne({ clerkUserId: userId });
+    if (!user) throw new Error("User not found");
 
-  const transaction = await db.transaction.findUnique({
-    where: {
-      id,
-      userId: user.id,
-    },
-  });
+    const transaction = await Transaction.findOne({
+      _id: id,
+      userId: user._id,
+    });
 
-  if (!transaction) throw new Error("Transaction not found");
+    if (!transaction) throw new Error("Transaction not found");
 
-  return serializeAmount(transaction);
+    return {
+      ...transaction.toObject(),
+      id: transaction._id.toString(),
+      accountId: transaction.accountId.toString(),
+    };
+  } catch (error) {
+    console.error("Get transaction error:", error);
+    throw new Error(error.message);
+  }
 }
 
 export async function updateTransaction(id, data) {
@@ -98,21 +92,15 @@ export async function updateTransaction(id, data) {
     const { userId } = await auth();
     if (!userId) throw new Error("Unauthorized");
 
-    const user = await db.user.findUnique({
-      where: { clerkUserId: userId },
-    });
+    await connectDB();
 
+    const user = await User.findOne({ clerkUserId: userId });
     if (!user) throw new Error("User not found");
 
-    // Get original transaction to calculate balance change
-    const originalTransaction = await db.transaction.findUnique({
-      where: {
-        id,
-        userId: user.id,
-      },
-      include: {
-        account: true,
-      },
+    // Get original transaction
+    const originalTransaction = await Transaction.findOne({
+      _id: id,
+      userId: user._id,
     });
 
     if (!originalTransaction) throw new Error("Transaction not found");
@@ -120,49 +108,46 @@ export async function updateTransaction(id, data) {
     // Calculate balance changes
     const oldBalanceChange =
       originalTransaction.type === "EXPENSE"
-        ? -originalTransaction.amount.toNumber()
-        : originalTransaction.amount.toNumber();
+        ? -originalTransaction.amount
+        : originalTransaction.amount;
 
     const newBalanceChange =
       data.type === "EXPENSE" ? -data.amount : data.amount;
 
     const netBalanceChange = newBalanceChange - oldBalanceChange;
 
-    // Update transaction and account balance in a transaction
-    const transaction = await db.$transaction(async (tx) => {
-      const updated = await tx.transaction.update({
-        where: {
-          id,
-          userId: user.id,
-        },
-        data: {
-          ...data,
-          nextRecurringDate:
-            data.isRecurring && data.recurringInterval
-              ? calculateNextRecurringDate(data.date, data.recurringInterval)
-              : null,
-        },
-      });
+    // Update transaction
+    const updated = await Transaction.findOneAndUpdate(
+      { _id: id, userId: user._id },
+      {
+        ...data,
+        nextRecurringDate:
+          data.isRecurring && data.recurringInterval
+            ? calculateNextRecurringDate(data.date, data.recurringInterval)
+            : null,
+      },
+      { new: true }
+    );
 
-      // Update account balance
-      await tx.account.update({
-        where: { id: data.accountId },
-        data: {
-          balance: {
-            increment: netBalanceChange,
-          },
-        },
-      });
-
-      return updated;
+    // Update account balance
+    await Account.findByIdAndUpdate(data.accountId, {
+      $inc: { balance: netBalanceChange },
     });
 
     revalidatePath("/dashboard");
     revalidatePath(`/account/${data.accountId}`);
 
-    return { success: true, data: serializeAmount(transaction) };
+    return {
+      success: true,
+      data: {
+        ...updated.toObject(),
+        id: updated._id.toString(),
+        accountId: updated.accountId.toString(),
+      },
+    };
   } catch (error) {
-    throw new Error(error.message);
+    console.error("Update transaction error:", error);
+    return { success: false, error: error.message };
   }
 }
 
@@ -172,41 +157,40 @@ export async function getUserTransactions(query = {}) {
     const { userId } = await auth();
     if (!userId) throw new Error("Unauthorized");
 
-    const user = await db.user.findUnique({
-      where: { clerkUserId: userId },
-    });
+    await connectDB();
 
-    if (!user) {
-      throw new Error("User not found");
-    }
+    const user = await User.findOne({ clerkUserId: userId });
+    if (!user) throw new Error("User not found");
 
-    const transactions = await db.transaction.findMany({
-      where: {
-        userId: user.id,
-        ...query,
-      },
-      include: {
-        account: true,
-      },
-      orderBy: {
-        date: "desc",
-      },
-    });
+    const transactions = await Transaction.find({
+      userId: user._id,
+      ...query,
+    }).sort({ date: -1 });
 
-    return { success: true, data: transactions };
+    return {
+      success: true,
+      data: transactions.map((t) => ({
+        ...t.toObject(),
+        id: t._id.toString(),
+        accountId: t.accountId.toString(),
+      })),
+    };
   } catch (error) {
-    throw new Error(error.message);
+    console.error("Get user transactions error:", error);
+    return { success: false, error: error.message };
   }
 }
 
 // Scan Receipt
 export async function scanReceipt(file) {
   try {
+    if (!process.env.GEMINI_API_KEY) {
+      throw new Error("Gemini API key is not configured");
+    }
+
     const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
-    // Convert File to ArrayBuffer
     const arrayBuffer = await file.arrayBuffer();
-    // Convert ArrayBuffer to Base64
     const base64String = Buffer.from(arrayBuffer).toString("base64");
 
     const prompt = `
@@ -226,7 +210,7 @@ export async function scanReceipt(file) {
         "category": "string"
       }
 
-      If its not a recipt, return an empty object
+      If it's not a receipt, return an empty object
     `;
 
     const result = await model.generateContent([
@@ -258,7 +242,7 @@ export async function scanReceipt(file) {
     }
   } catch (error) {
     console.error("Error scanning receipt:", error);
-    throw new Error("Failed to scan receipt");
+    throw new Error("Failed to scan receipt: " + error.message);
   }
 }
 

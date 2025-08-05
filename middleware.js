@@ -1,6 +1,4 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
-import { connectDB } from "@/lib/mongodb";
-import User from "@/models/User";
 
 // Define public routes that don't require authentication
 const isPublicRoute = createRouteMatcher([
@@ -11,7 +9,7 @@ const isPublicRoute = createRouteMatcher([
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
-  // Check if the current route is public
+  // Temporarily simplified - just handle auth without database operations
   if (isPublicRoute(req)) {
     return; // Allow access to public routes
   }
@@ -26,31 +24,13 @@ export default clerkMiddleware(async (auth, req) => {
     return Response.redirect(signInUrl);
   }
 
-  // Ensure user exists in MongoDB (fallback if webhook isn't working)
-  try {
-    await connectDB();
-    const existingUser = await User.findOne({ clerkUserId: userId });
-
-    if (!existingUser) {
-      console.log("Creating user in MongoDB...");
-      await User.create({
-        clerkUserId: userId,
-        name: "User", // Default name, will be updated via webhook or profile
-        email: "", // Will be updated via webhook
-      });
-    }
-  } catch (error) {
-    console.error("Error ensuring user exists:", error);
-  }
-
-  // User is authenticated, continue to the route
+  // Skip database operations for now
+  console.log("User authenticated:", userId);
 });
 
 export const config = {
   matcher: [
-    // Skip Next.js internals and all static files, unless found in search params
     "/((?!_next|[^?]*\\.(?:html?|css|js(?!on)|jpe?g|webp|png|gif|svg|ttf|woff2?|ico|csv|docx?|xlsx?|zip|webmanifest)).*)",
-    // Always run for API routes
     "/(api|trpc)(.*)",
   ],
 };
