@@ -19,19 +19,28 @@ export async function getUserAccounts() {
   }
 
   try {
-    const accounts = await Account.find({ userId: user._id })
-      .sort({ createdAt: -1 })
-      .populate({
-        path: "transactions",
-        options: { count: true },
-      });
+    const accounts = await Account.find({ userId: user._id }).sort({
+      createdAt: -1,
+    });
 
-    return accounts.map((account) => ({
-      ...account.toObject(),
-      _count: {
-        transactions: account.transactions?.length || 0,
-      },
-    }));
+    // Get transaction counts for each account
+    const accountsWithCounts = await Promise.all(
+      accounts.map(async (account) => {
+        const transactionCount = await Transaction.countDocuments({
+          accountId: account._id,
+        });
+
+        return {
+          ...account.toObject(),
+          id: account._id.toString(), // Convert ObjectId to string for consistency
+          _count: {
+            transactions: transactionCount,
+          },
+        };
+      })
+    );
+
+    return accountsWithCounts;
   } catch (error) {
     console.error(error.message);
     throw error;
@@ -74,7 +83,13 @@ export async function createAccount(data) {
     });
 
     revalidatePath("/dashboard");
-    return { success: true, data: account.toObject() };
+    return {
+      success: true,
+      data: {
+        ...account.toObject(),
+        id: account._id.toString(),
+      },
+    };
   } catch (error) {
     throw new Error(error.message);
   }
@@ -95,5 +110,9 @@ export async function getDashboardData() {
     date: -1,
   });
 
-  return transactions.map((t) => t.toObject());
+  return transactions.map((t) => ({
+    ...t.toObject(),
+    id: t._id.toString(),
+    accountId: t.accountId.toString(),
+  }));
 }

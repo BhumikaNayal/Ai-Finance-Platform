@@ -1,4 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { connectDB } from "@/lib/mongodb";
+import User from "@/models/User";
 
 // Define public routes that don't require authentication
 const isPublicRoute = createRouteMatcher([
@@ -22,6 +24,23 @@ export default clerkMiddleware(async (auth, req) => {
     const signInUrl = new URL("/sign-in", req.url);
     signInUrl.searchParams.set("redirect_url", req.url);
     return Response.redirect(signInUrl);
+  }
+
+  // Ensure user exists in MongoDB (fallback if webhook isn't working)
+  try {
+    await connectDB();
+    const existingUser = await User.findOne({ clerkUserId: userId });
+
+    if (!existingUser) {
+      console.log("Creating user in MongoDB...");
+      await User.create({
+        clerkUserId: userId,
+        name: "User", // Default name, will be updated via webhook or profile
+        email: "", // Will be updated via webhook
+      });
+    }
+  } catch (error) {
+    console.error("Error ensuring user exists:", error);
   }
 
   // User is authenticated, continue to the route

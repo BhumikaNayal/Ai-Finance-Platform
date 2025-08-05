@@ -1,4 +1,3 @@
-// components/create-account-drawer.jsx
 "use client";
 
 import { useState } from "react";
@@ -10,7 +9,7 @@ import { toast } from "sonner";
 export default function CreateAccountDrawer({ children }) {
   const [name, setName] = useState("");
   const [balance, setBalance] = useState("");
-  const [type, setType] = useState("CHECKING");
+  const [type, setType] = useState("CHECKING"); // Fixed to match enum
 
   const handleSubmit = async (e) => {
     e.preventDefault();
