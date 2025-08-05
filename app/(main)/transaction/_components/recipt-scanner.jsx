@@ -6,10 +6,10 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import useFetch from "@/hooks/use-fetch";
 import { scanReceipt } from "@/actions/transaction";
-import imageCompression from "browser-image-compression";
 
 export function ReceiptScanner({ onScanComplete }) {
   const fileInputRef = useRef(null);
+
   const {
     loading: scanReceiptLoading,
     fn: scanReceiptFn,
@@ -21,23 +21,16 @@ export function ReceiptScanner({ onScanComplete }) {
       toast.error("File size should be less than 5MB");
       return;
     }
-    try {
-      const options = { maxSizeMB: 1, maxWidthOrHeight: 1024 };
-      const compressedFile = await imageCompression(file, options);
-      await scanReceiptFn(compressedFile);
-    } catch (error) {
-      toast.error("Failed to compress or scan receipt");
-    }
+
+    await scanReceiptFn(file);
   };
 
   useEffect(() => {
     if (scannedData && !scanReceiptLoading) {
       onScanComplete(scannedData);
       toast.success("Receipt scanned successfully");
-    } else if (scanReceiptLoading === false && !scannedData) {
-      toast.error("Failed to scan receipt");
     }
-  }, [scanReceiptLoading, scannedData, onScanComplete]);
+  }, [scanReceiptLoading, scannedData]);
 
   return (
     <div className="flex items-center gap-4">

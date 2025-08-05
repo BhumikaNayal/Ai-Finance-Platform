@@ -1,49 +1,53 @@
 "use server";
 
-import { connectDB } from "@/lib/mongodb";
-import User from "@/models/User";
-import Account from "@/models/Account";
-import Transaction from "@/models/Transaction";
+import aj from "@/lib/arcjet";
+import { db } from "@/lib/prisma";
+import { request } from "@arcjet/next";
 import { auth } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
+
+const serializeTransaction = (obj) => {
+  const serialized = { ...obj };
+  if (obj.balance) {
+    serialized.balance = obj.balance.toNumber();
+  }
+  if (obj.amount) {
+    serialized.amount = obj.amount.toNumber();
+  }
+  return serialized;
+};
 
 export async function getUserAccounts() {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
-  await connectDB();
+  const user = await db.user.findUnique({
+    where: { clerkUserId: userId },
+  });
 
-  const user = await User.findOne({ clerkUserId: userId });
   if (!user) {
     throw new Error("User not found");
   }
 
   try {
-    const accounts = await Account.find({ userId: user._id }).sort({
-      createdAt: -1,
+    const accounts = await db.account.findMany({
+      where: { userId: user.id },
+      orderBy: { createdAt: "desc" },
+      include: {
+        _count: {
+          select: {
+            transactions: true,
+          },
+        },
+      },
     });
 
-    // Get transaction counts for each account
-    const accountsWithCounts = await Promise.all(
-      accounts.map(async (account) => {
-        const transactionCount = await Transaction.countDocuments({
-          accountId: account._id,
-        });
+    // Serialize accounts before sending to client
+    const serializedAccounts = accounts.map(serializeTransaction);
 
-        return {
-          ...account.toObject(),
-          id: account._id.toString(), // Convert ObjectId to string for consistency
-          _count: {
-            transactions: transactionCount,
-          },
-        };
-      })
-    );
-
-    return accountsWithCounts;
+    return serializedAccounts;
   } catch (error) {
     console.error(error.message);
-    throw error;
   }
 }
 
@@ -52,44 +56,79 @@ export async function createAccount(data) {
     const { userId } = await auth();
     if (!userId) throw new Error("Unauthorized");
 
-    await connectDB();
+    // Get request data for ArcJet
+    const req = await request();
 
-    const user = await User.findOne({ clerkUserId: userId });
+    // Check rate limit
+    const decision = await aj.protect(req, {
+      userId,
+      requested: 1, // Specify how many tokens to consume
+    });
+
+    if (decision.isDenied()) {
+      if (decision.reason.isRateLimit()) {
+        const { remaining, reset } = decision.reason;
+        console.error({
+          code: "RATE_LIMIT_EXCEEDED",
+          details: {
+            remaining,
+            resetInSeconds: reset,
+          },
+        });
+
+        throw new Error("Too many requests. Please try again later.");
+      }
+
+      throw new Error("Request blocked");
+    }
+
+    const user = await db.user.findUnique({
+      where: { clerkUserId: userId },
+    });
+
     if (!user) {
       throw new Error("User not found");
     }
 
+    // Convert balance to float before saving
     const balanceFloat = parseFloat(data.balance);
     if (isNaN(balanceFloat)) {
       throw new Error("Invalid balance amount");
     }
 
-    const existingAccounts = await Account.find({ userId: user._id });
+    // Check if this is the user's first account
+    const existingAccounts = await db.account.findMany({
+      where: { userId: user.id },
+    });
+
+    // If it's the first account, make it default regardless of user input
+    // If not, use the user's preference
     const shouldBeDefault =
       existingAccounts.length === 0 ? true : data.isDefault;
 
+    // If this account should be default, unset other default accounts
     if (shouldBeDefault) {
-      await Account.updateMany(
-        { userId: user._id, isDefault: true },
-        { isDefault: false }
-      );
+      await db.account.updateMany({
+        where: { userId: user.id, isDefault: true },
+        data: { isDefault: false },
+      });
     }
 
-    const account = await Account.create({
-      ...data,
-      balance: balanceFloat,
-      userId: user._id,
-      isDefault: shouldBeDefault,
+    // Create new account
+    const account = await db.account.create({
+      data: {
+        ...data,
+        balance: balanceFloat,
+        userId: user.id,
+        isDefault: shouldBeDefault, // Override the isDefault based on our logic
+      },
     });
 
+    // Serialize the account before returning
+    const serializedAccount = serializeTransaction(account);
+
     revalidatePath("/dashboard");
-    return {
-      success: true,
-      data: {
-        ...account.toObject(),
-        id: account._id.toString(),
-      },
-    };
+    return { success: true, data: serializedAccount };
   } catch (error) {
     throw new Error(error.message);
   }
@@ -99,20 +138,19 @@ export async function getDashboardData() {
   const { userId } = await auth();
   if (!userId) throw new Error("Unauthorized");
 
-  await connectDB();
+  const user = await db.user.findUnique({
+    where: { clerkUserId: userId },
+  });
 
-  const user = await User.findOne({ clerkUserId: userId });
   if (!user) {
     throw new Error("User not found");
   }
 
-  const transactions = await Transaction.find({ userId: user._id }).sort({
-    date: -1,
+  // Get all user transactions
+  const transactions = await db.transaction.findMany({
+    where: { userId: user.id },
+    orderBy: { date: "desc" },
   });
 
-  return transactions.map((t) => ({
-    ...t.toObject(),
-    id: t._id.toString(),
-    accountId: t.accountId.toString(),
-  }));
+  return transactions.map(serializeTransaction);
 }

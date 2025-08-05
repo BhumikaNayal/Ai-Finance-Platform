@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Pencil, Check, X } from "lucide-react";
 import useFetch from "@/hooks/use-fetch";
 import { toast } from "sonner";
+
 import {
   Card,
   CardContent,
@@ -35,10 +36,12 @@ export function BudgetProgress({ initialBudget, currentExpenses }) {
 
   const handleUpdateBudget = async () => {
     const amount = parseFloat(newBudget);
+
     if (isNaN(amount) || amount <= 0) {
       toast.error("Please enter a valid amount");
       return;
     }
+
     await updateBudgetFn(amount);
   };
 
@@ -123,13 +126,14 @@ export function BudgetProgress({ initialBudget, currentExpenses }) {
           <div className="space-y-2">
             <Progress
               value={percentUsed}
-              className={
+              extraStyles={`${
+                // add to Progress component
                 percentUsed >= 90
                   ? "bg-red-500"
                   : percentUsed >= 75
                   ? "bg-yellow-500"
                   : "bg-green-500"
-              }
+              }`}
             />
             <p className="text-xs text-muted-foreground text-right">
               {percentUsed.toFixed(1)}% used
