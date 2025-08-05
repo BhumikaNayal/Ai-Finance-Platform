@@ -12,7 +12,7 @@ generator client {
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("MONGODB_URI")
  directUrl     = env("DIRECT_URL")
 }
 

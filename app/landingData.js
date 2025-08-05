@@ -7,15 +7,15 @@ import {
   Zap,
 } from "lucide-react";
 
-
+// Stats Data
 export const statsData = [
   {
-    value: "506K+",
-    label: "clients",
+    value: "50K+",
+    label: "Active Users",
   },
   {
-    value: "120B+",
-    label: "Revenue",
+    value: "$2B+",
+    label: "Transactions Tracked",
   },
   {
     value: "99.9%",
@@ -88,24 +88,24 @@ export const howItWorksData = [
 // Testimonials Data
 export const testimonialsData = [
   {
-    name: "Riya Gupta",
+    name: "Sarah Johnson",
     role: "Small Business Owner",
-    image: "/riya.png",
+    image: "https://randomuser.me/api/portraits/women/75.jpg",
     quote:
-      "Ai Finance Analysis  has transformed how I manage my business finances. The AI insights have helped me identify cost-saving opportunities I never knew existed.",
+      "Ai Finance Platform  has transformed how I manage my business finances. The AI insights have helped me identify cost-saving opportunities I never knew existed.",
   },
   {
-    name: "Kiran Kapoor",
+    name: "Michael Chen",
     role: "Freelancer",
-    image: "/Kiran.png",
+    image: "https://randomuser.me/api/portraits/men/75.jpg",
     quote:
       "The receipt scanning feature saves me hours each month. Now I can focus on my work instead of manual data entry and expense tracking.",
   },
   {
-    name: "Raj Sharma",
+    name: "Emily Rodriguez",
     role: "Financial Advisor",
-    image: "/raj.png",
+    image: "https://randomuser.me/api/portraits/women/74.jpg",
     quote:
-      "I recommend Ai Finance Analysis to all my clients. The multi-currency support and detailed analytics make it perfect for international investors.",
+      "I recommend Ai Finance Platform  to all my clients. The multi-currency support and detailed analytics make it perfect for international investors.",
   },
 ];

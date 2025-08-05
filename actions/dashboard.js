@@ -1,54 +1,99 @@
 "use server";
-import {db} from "@/lib/prisma";
-import {auth} from "@clerk/nextjs/server";
+
+import { connectDB } from "@/lib/mongodb";
+import User from "@/models/User";
+import Account from "@/models/Account";
+import Transaction from "@/models/Transaction";
+import { auth } from "@clerk/nextjs/server";
 import { revalidatePath } from "next/cache";
-const serializeTransaction = (obj)=>{
-   const serialized = {...obj};
-   if(obj.balance){
-      serialized.balance = obj.balance.toNumber();
-   }
-};
-export async function createAccount(data){
-   try{
-    const {userId}=await auth();
-    if(!userId) throw new Error ("Unauthorised");
-    const user = await db.user.findUnique({
-      where:{ClerkUserId: userId},
-    });
-    if(!user){
+
+export async function getUserAccounts() {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  await connectDB();
+
+  const user = await User.findOne({ clerkUserId: userId });
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  try {
+    const accounts = await Account.find({ userId: user._id })
+      .sort({ createdAt: -1 })
+      .populate({
+        path: "transactions",
+        options: { count: true },
+      });
+
+    return accounts.map((account) => ({
+      ...account.toObject(),
+      _count: {
+        transactions: account.transactions?.length || 0,
+      },
+    }));
+  } catch (error) {
+    console.error(error.message);
+    throw error;
+  }
+}
+
+export async function createAccount(data) {
+  try {
+    const { userId } = await auth();
+    if (!userId) throw new Error("Unauthorized");
+
+    await connectDB();
+
+    const user = await User.findOne({ clerkUserId: userId });
+    if (!user) {
       throw new Error("User not found");
     }
-    const balanceFloat = parseFloat(data.balance)
-    if(isNaN(balanceFloat)){
-      throw new Error("Invalid  balance amount");
+
+    const balanceFloat = parseFloat(data.balance);
+    if (isNaN(balanceFloat)) {
+      throw new Error("Invalid balance amount");
     }
-    const existingAccounts = await db.account.findMany({
-      where:{userId:user.id},
-    });
+
+    const existingAccounts = await Account.find({ userId: user._id });
     const shouldBeDefault =
-    existingAccounts.length == 0? true:data.isDefault;
-    if(shouldBeDefault){
-       await db.account.updateMany({
-      where:{userId:user.id, isDefault:true},
-      data:{isDefault : false},
+      existingAccounts.length === 0 ? true : data.isDefault;
 
-    }); 
-   }
-   
-    const account = await db.account.create({
-      data:{
-         ...data,
-         balance:balanceFloat,
-         iserId: user.id,
-         isDefault: shouldBeDefault,
-     
-      },
+    if (shouldBeDefault) {
+      await Account.updateMany(
+        { userId: user._id, isDefault: true },
+        { isDefault: false }
+      );
+    }
+
+    const account = await Account.create({
+      ...data,
+      balance: balanceFloat,
+      userId: user._id,
+      isDefault: shouldBeDefault,
     });
-   const serializedAccount = serializeTransaction(account);
-   revalidatePath("/dashboard");
-   return { success:true , data: serializedAccount};
-   } catch (error){}
-   
 
+    revalidatePath("/dashboard");
+    return { success: true, data: account.toObject() };
+  } catch (error) {
+    throw new Error(error.message);
+  }
 }
-    
+
+export async function getDashboardData() {
+  const { userId } = await auth();
+  if (!userId) throw new Error("Unauthorized");
+
+  await connectDB();
+
+  const user = await User.findOne({ clerkUserId: userId });
+  if (!user) {
+    throw new Error("User not found");
+  }
+
+  const transactions = await Transaction.find({ userId: user._id }).sort({
+    date: -1,
+  });
+
+  return transactions.map((t) => t.toObject());
+}
